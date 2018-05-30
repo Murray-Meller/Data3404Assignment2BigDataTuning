@@ -1,17 +1,16 @@
 
 import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.functions.GroupReduceFunction;
-
+import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
-
 import org.apache.flink.api.java.tuple.Tuple1;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
-
 import org.apache.flink.util.Collector;
-
 import org.apache.flink.api.common.operators.Order;
+import org.apache.flink.core.fs.FileSystem.WriteMode;
 
 import java.util.Scanner;
 
@@ -45,24 +44,24 @@ public class TopThreeAirports {
 		// read raw CSV with data, airport and departure time
 		// date, origin, departure
 		DataSet<Tuple3<String, String, String>> rawData = env
-				.readCsvFile("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/data3404/assesmentDataSet/ontimeperformance_flights_tiny.csv")
+				.readCsvFile("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/share/data3404/assignment/ontimeperformance_flights_tiny.csv")
 				.includeFields("000110000100")
 				.ignoreFirstLine()
 				.ignoreInvalidLines()
-				.types(String.class, String.class, String.class);
+				.types(String.class, String.class, String.class);		
 		
 		// filter flights that aren't in the correct year or never departed
 		DataSet<Tuple1<String>> filtered = rawData
-				.filter(new FilterFlightsByYear()) //returns flights in the given year that actually departed 
-				.project(1);
+			.filter(new FilterFlightsByYear()) //returns flights in the given year that actually departed 
+			.project(1);	
 		
-		filtered.print(); 
+		//sort results
+		DataSet<Tuple2<String, Integer>> sorted = filtered.groupBy(0)
+				.reduceGroup(new AirportCount())
+				.sortPartition(1, Order.DESCENDING);
 		
-		// group according to airport name and orderby count
-		filtered.groupBy(0)
-			.reduceGroup(new AirportCount())
-			.sortPartition(1, Order.DESCENDING)
-			.writeAsText("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/data3404/results/TopThreeAirportsResult.txt");// 
+		sorted.first(3).writeAsCsv("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/TopThreeAirportsFinal-" + year + ".txt", "\n", "\t", WriteMode.OVERWRITE).setParallelism(1);
+
 		
 		env.execute("Executing program");
 
@@ -84,7 +83,7 @@ public class TopThreeAirports {
 			return rowYear == year || !row.f0.equals("");
 		}
 	}
-
+	
 	/**
 	 * A GroupReduceFucntion implementation that groups the input by the first field.
 	 * Input Tuple1<String : Airport code>
@@ -95,7 +94,6 @@ public class TopThreeAirports {
 
 		@Override
 		public void reduce(Iterable<Tuple1<String>> records, Collector<Tuple2<String, Integer>> out) throws Exception {
-
 			String airport = null;
 			int cnt = 0;
 
@@ -107,4 +105,24 @@ public class TopThreeAirports {
 			out.collect(new Tuple2<>(airport, cnt));
 		}
 	}
+	
+	
+	
+	public static class AirportWithCount {
+		public long count;
+		public String airportCode;
+		
+		public AirportWithCount() {}
+		
+		public AirportWithCount(String code, long count) {
+			this.airportCode = code;
+			this.count = count;
+		}
+		
+		@Override
+		public String toString() {
+			return airportCode + "\t" + count;
+		}
+	}
+
 }

@@ -17,6 +17,7 @@ import java.util.Scanner;
 public class TopThreeAirports {
 	public static void main(String[] args) throws Exception {
 		
+		// Get teh user to specify the year they are interested in.
 		System.out.println("The following program will find the top three airports based on the number of departures form that airport for a given year.");
 		System.out.println("Please enter the year (yy): ");
 		Scanner input = new Scanner(System.in);
@@ -30,8 +31,7 @@ public class TopThreeAirports {
 		FilterFlightsByYear.year = year;
 		input.close();
 		
-		
-		// obtain an execution environment
+		// Obtain an execution environment
 		ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 
 		// OVERVIEW:
@@ -40,9 +40,14 @@ public class TopThreeAirports {
 			// need the following fields: date, origin, actual departure (to tell if the flight actually happened)
 			// filter out flights that never happened
 			// filter out flights not in the correct year
+			// count # of instances for airport
+			// merge counts globally, then print.
+		
+		// vvvvvvvvvv DONE IN PARALLEL THANKS TO FLINK vvvvvvvvvv
 		
 		// read raw CSV with data, airport and departure time
 		// date, origin, departure
+		// This contains optimisations in that it only selects the attributes necessary to the search. I.e. we dont read the whole table in
 		DataSet<Tuple3<String, String, String>> rawData = env
 				.readCsvFile("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/share/data3404/assignment/ontimeperformance_flights_tiny.csv")
 				.includeFields("000110000100")
@@ -51,6 +56,7 @@ public class TopThreeAirports {
 				.types(String.class, String.class, String.class);		
 		
 		// filter flights that aren't in the correct year or never departed
+		// OPT: reduces result size. 
 		DataSet<Tuple1<String>> filtered = rawData
 			.filter(new FilterFlightsByYear()) //returns flights in the given year that actually departed 
 			.project(1);	
@@ -60,19 +66,19 @@ public class TopThreeAirports {
 				.reduceGroup(new AirportCount())
 				.sortPartition(1, Order.DESCENDING);
 		
-		sorted.first(3).writeAsCsv("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/TopThreeAirportsFinal-" + year + ".txt", "\n", "\t", WriteMode.OVERWRITE).setParallelism(1);
-
+		// ^^^^^^^^^^ DONE IN PARALLEL THANKS TO FLINK ^^^^^^^^^^
 		
+		// write the top three results to disk (note: list is sorted, so top three items = top three airports)
+		sorted.first(3).writeAsCsv("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/TopThreeAirportsFinal-" + year + ".txt", "\n", "\t", WriteMode.OVERWRITE).setParallelism(1);
 		env.execute("Executing program");
 
 	}
 	
 	/**
-	 * Filters the flight by the year and removes flights that never left
-	 * input: FlightDate, Airport code, departure time
+	 * Filters the flight by the year and removes flights that never departed
+	 * input: Tuple3<String: FlightDate, String: Airport code, String: departure time>
 	 * NB. the static variable year must be set externally.
 	 * @author murraymeller
-	 *
 	 */
 	private static class FilterFlightsByYear implements FilterFunction<Tuple3<String, String, String>> {
 		public static int year = 0;
@@ -85,10 +91,11 @@ public class TopThreeAirports {
 	}
 	
 	/**
-	 * A GroupReduceFucntion implementation that groups the input by the first field.
-	 * Input Tuple1<String : Airport code>
+	 * A GroupReduceFucntion implementation that groups airport by their code and counts them
+	 * 
+	 * Input : Tuple1<String: Airport code>
+	 * Output: Tuple2<String: Airport code, Integer: # of departures>
 	 * @author murraymeller
-	 *
 	 */
 	public static class AirportCount implements GroupReduceFunction<Tuple1<String>, Tuple2<String, Integer>> {
 
@@ -103,25 +110,6 @@ public class TopThreeAirports {
 
 			}
 			out.collect(new Tuple2<>(airport, cnt));
-		}
-	}
-	
-	
-	
-	public static class AirportWithCount {
-		public long count;
-		public String airportCode;
-		
-		public AirportWithCount() {}
-		
-		public AirportWithCount(String code, long count) {
-			this.airportCode = code;
-			this.count = count;
-		}
-		
-		@Override
-		public String toString() {
-			return airportCode + "\t" + count;
 		}
 	}
 

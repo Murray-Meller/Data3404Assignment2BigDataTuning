@@ -1,8 +1,6 @@
 
 import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.api.common.functions.GroupReduceFunction;
-import org.apache.flink.api.common.functions.ReduceFunction;
-import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.tuple.Tuple1;
@@ -16,10 +14,9 @@ import java.util.Scanner;
 
 public class TopThreeAirports {
 	public static void main(String[] args) throws Exception {
-		
-		// Get teh user to specify the year they are interested in.
+		// Get the user to specify the year they are interested in.
 		System.out.println("The following program will find the top three airports based on the number of departures form that airport for a given year.");
-		System.out.println("Please enter the year (yy): ");
+		System.out.println("Please enter the year (yyyy): ");
 		Scanner input = new Scanner(System.in);
 		
 		while (!input.hasNextInt()) {
@@ -28,8 +25,8 @@ public class TopThreeAirports {
 		}
 		
 		int year = input.nextInt();
-		FilterFlightsByYear.year = year;
 		input.close();
+		System.out.println("Entered Year: " + year);
 		
 		// Obtain an execution environment
 		ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
@@ -54,22 +51,23 @@ public class TopThreeAirports {
 				.ignoreFirstLine()
 				.ignoreInvalidLines()
 				.types(String.class, String.class, String.class);		
-		
+
 		// filter flights that aren't in the correct year or never departed
 		// OPT: reduces result size. 
 		DataSet<Tuple1<String>> filtered = rawData
-			.filter(new FilterFlightsByYear()) //returns flights in the given year that actually departed 
+			.filter(new FilterFlightsByYear(year)) //returns flights in the given year that actually departed 
 			.project(1);	
-		
+
 		//sort results
 		DataSet<Tuple2<String, Integer>> sorted = filtered.groupBy(0)
 				.reduceGroup(new AirportCount())
-				.sortPartition(1, Order.DESCENDING);
+				.sortPartition(1, Order.DESCENDING).setParallelism(1);
 		
 		// ^^^^^^^^^^ DONE IN PARALLEL THANKS TO FLINK ^^^^^^^^^^
 		
 		// write the top three results to disk (note: list is sorted, so top three items = top three airports)
 		sorted.first(3).writeAsCsv("hdfs://soit-hdp-pro-1.ucc.usyd.edu.au/user/mmel5239/TopThreeAirportsFinal-" + year + ".txt", "\n", "\t", WriteMode.OVERWRITE).setParallelism(1);
+		
 		env.execute("Executing program");
 
 	}
@@ -81,12 +79,37 @@ public class TopThreeAirports {
 	 * @author murraymeller
 	 */
 	private static class FilterFlightsByYear implements FilterFunction<Tuple3<String, String, String>> {
-		public static int year = 0;
+		int year;
+		
+		public FilterFlightsByYear(int year) {
+			this.year = year;
+		}
 		
 		@Override
 		public boolean filter(Tuple3<String, String, String> row) {
-			int rowYear = Integer.parseInt( row.f0.substring(row.f0.length() - 3) );
-			return rowYear == year || !row.f0.equals("");
+			String date = row.f0;
+			String depart = row.f2;
+			
+			if ((date == null || depart == null) || row.f2.length() <= 0) {
+				return false;
+			}
+
+			String flightYear = null;
+			flightYear = (date.length() >= 4) ? date.substring(0,4) : null;
+
+			
+			if (flightYear == null) {
+				return false;
+			}
+			else{
+				try {
+					int rowYear = Integer.parseInt(flightYear);
+					return rowYear == this.year;
+				}
+				catch (Exception e) {
+					return false;
+				}
+			}
 		}
 	}
 	
